@@ -1,0 +1,277 @@
+#!/usr/bin/env python3
+"""pixel-snap: put fake pixel art back on its real grid.
+
+Finds the true pixel size and grid offset of an upscaled / AI-generated
+"pixel art" image, takes one colour per cell, snaps colours to N colours
+or to a given palette, and reports the mixed cells (mixels).
+"""
+import argparse
+import json
+import sys
+from dataclasses import dataclass
+
+import numpy as np
+from PIL import Image
+
+__version__ = "0.1.0"
+
+
+@dataclass
+class Grid:
+    scale_x: float
+    scale_y: float
+    offset_x: float
+    offset_y: float
+
+
+@dataclass
+class Result:
+    image: np.ndarray      # one pixel per cell, uint8 RGB or RGBA
+    mixed: np.ndarray      # bool, one flag per cell
+    grid: Grid
+    xs: list               # cell boundaries along x (len = cells + 1)
+    ys: list
+    colors: np.ndarray     # final colours used, uint8 Nx3
+
+
+# ---------- grid detection ----------
+
+def _edge_profile(rgb, axis):
+    """Mean colour jump between neighbouring columns (axis=1) or rows (axis=0)."""
+    d = np.abs(np.diff(rgb.astype(np.int32), axis=axis)).sum(axis=2)
+    return d.mean(axis=0 if axis == 1 else 1)
+
+
+def _coherence(edge, pos, periods):
+    """|sum e * exp(2*pi*i*x/p)| / sum e for each period p, plus the phase."""
+    out = np.empty(len(periods), dtype=np.complex128)
+    for k in range(0, len(periods), 512):
+        p = periods[k:k + 512, None]
+        out[k:k + 512] = (edge[None, :] * np.exp(2j * np.pi * pos[None, :] / p)).sum(1)
+    return np.abs(out) / edge.sum(), np.angle(out)
+
+
+def _best_period(edge, max_period=None):
+    """Return (period, offset), both float. A cell starts at x = i+1 for every jump edge[i].
+
+    Cell borders sit at offset + k*period. Their jumps add up in phase at the true
+    period and at its divisors (p/2, p/3 ...), and cancel at its multiples, so the
+    answer is the LARGEST strong peak of the edge spectrum.
+    """
+    n = len(edge) + 1
+    if edge.max() <= 0 or n < 8:
+        return 1.0, 0.0
+    edge = edge - np.median(edge)          # drop the noise floor
+    edge[edge < 0] = 0
+    if edge.sum() <= 0:
+        return 1.0, 0.0
+    pos = np.arange(1, n, dtype=np.float64)
+    hi = min(max_period or n / 4, n / 4)  # at least four cells, or every period looks coherent
+    if hi < 2:
+        return 1.0, 0.0
+    periods = np.exp(np.arange(np.log(2.0), np.log(hi), 0.001))
+    coh, _ = _coherence(edge, pos, periods)
+    best = coh.max()
+    if best < 0.3:
+        return 1.0, 0.0
+    peaks = [i for i in range(1, len(coh) - 1)
+             if coh[i] >= coh[i - 1] and coh[i] >= coh[i + 1] and coh[i] >= 0.8 * best]
+    i = max(peaks) if peaks else int(coh.argmax())
+    # refine around the chosen peak
+    fine = np.linspace(periods[max(i - 2, 0)], periods[min(i + 2, len(periods) - 1)], 81)
+    fcoh, fang = _coherence(edge, pos, fine)
+    j = int(fcoh.argmax())
+    p = float(fine[j])
+    return p, float((fang[j] / (2 * np.pi) * p) % p)
+
+
+def detect_grid(img, max_scale=None):
+    rgb = np.asarray(img)[..., :3]
+    px, ox = _best_period(_edge_profile(rgb, 1), max_scale)
+    py, oy = _best_period(_edge_profile(rgb, 0), max_scale)
+    return Grid(px, py, ox, oy)
+
+
+def _bounds(n, scale, offset):
+    if scale <= 1:
+        return list(range(n + 1))
+    k0 = int(np.floor(-offset / scale))
+    starts = (offset + scale * np.arange(k0, k0 + int(n / scale) + 3))
+    starts = [int(round(x)) for x in starts if 1 <= round(x) <= n - 1]
+    return sorted(set([0] + starts + [n]))
+
+
+# ---------- colours ----------
+
+def _parse_hex(s):
+    s = s.strip().lstrip("#")
+    if len(s) != 6:
+        raise ValueError(f"bad hex colour: {s!r}")
+    return [int(s[i:i + 2], 16) for i in (0, 2, 4)]
+
+
+def load_palette(path):
+    with open(path, encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    cols = []
+    if lines and lines[0].strip() == "GIMP Palette":
+        for ln in lines[1:]:
+            ln = ln.strip()
+            if not ln or ln.startswith("#") or ":" in ln:
+                continue
+            parts = ln.split()
+            cols.append([int(v) for v in parts[:3]])
+    else:
+        for ln in lines:
+            ln = ln.split(";")[0].strip()
+            if ln:
+                cols.append(_parse_hex(ln))
+    if not cols:
+        raise ValueError(f"no colours in {path}")
+    return np.array(cols, dtype=np.uint8)
+
+
+def _nearest(colors, palette):
+    c = colors.astype(np.int32)[:, None, :]
+    p = palette.astype(np.int32)[None, :, :]
+    return ((c - p) ** 2).sum(axis=2).argmin(axis=1)
+
+
+def _kmeans(colors, k, iters=30):
+    """Deterministic k-means with farthest-point init."""
+    pts = colors.astype(np.float64)
+    uniq = np.unique(colors, axis=0)
+    if len(uniq) <= k:
+        return uniq.astype(np.uint8)
+    centers = [np.median(pts, axis=0)]
+    for _ in range(k - 1):
+        d = np.min([((pts - c) ** 2).sum(1) for c in centers], axis=0)
+        centers.append(pts[d.argmax()])
+    centers = np.array(centers)
+    for _ in range(iters):
+        lab = ((pts[:, None, :] - centers[None]) ** 2).sum(2).argmin(1)
+        new = np.array([pts[lab == i].mean(0) if (lab == i).any() else centers[i] for i in range(k)])
+        if np.allclose(new, centers):
+            break
+        centers = new
+    return np.clip(np.rint(centers), 0, 255).astype(np.uint8)
+
+
+# ---------- snapping ----------
+
+def snap(img, colors=None, palette=None, grid=None, mix_threshold=48.0, mix_fraction=0.2):
+    arr = np.asarray(img)
+    if arr.ndim == 2:
+        arr = np.stack([arr] * 3, axis=2)
+    has_alpha = arr.shape[2] == 4
+    grid = grid or detect_grid(arr)
+    h, w = arr.shape[:2]
+    xs = _bounds(w, grid.scale_x, grid.offset_x)
+    ys = _bounds(h, grid.scale_y, grid.offset_y)
+    gh, gw = len(ys) - 1, len(xs) - 1
+    out = np.zeros((gh, gw, 4), dtype=np.uint8)
+    mixed = np.zeros((gh, gw), dtype=bool)
+    for j in range(gh):
+        y0, y1 = ys[j], ys[j + 1]
+        my = (y1 - y0) // 4
+        for i in range(gw):
+            x0, x1 = xs[i], xs[i + 1]
+            mx = (x1 - x0) // 4
+            # the centre of the cell: blur and anti-aliasing live on the borders
+            cell = arr[y0 + my:y1 - my, x0 + mx:x1 - mx].reshape(-1, arr.shape[2]).astype(np.int32)
+            med = np.median(cell, axis=0)
+            out[j, i, :3] = np.rint(med[:3])
+            out[j, i, 3] = (255 if med[3] >= 128 else 0) if has_alpha else 255
+            dist = np.sqrt(((cell[:, :3] - med[:3]) ** 2).sum(1))
+            mixed[j, i] = (dist > mix_threshold).mean() > mix_fraction
+
+    opaque = out[..., 3] > 0
+    cols = out[..., :3][opaque]
+    if palette is not None:
+        palette = np.asarray(palette, dtype=np.uint8)
+        out[..., :3][opaque] = palette[_nearest(cols, palette)]
+    elif colors:
+        centers = _kmeans(cols, colors)
+        out[..., :3][opaque] = centers[_nearest(cols, centers)]
+    out[..., :3][~opaque] = 0
+    used = np.unique(out[..., :3][opaque], axis=0) if opaque.any() else np.zeros((0, 3), np.uint8)
+    image = out if has_alpha else out[..., :3]
+    return Result(image, mixed, grid, xs, ys, used)
+
+
+def mixel_map(img, res):
+    """The source image with mixed cells painted red and the grid drawn faintly."""
+    base = np.asarray(Image.fromarray(np.asarray(img)).convert("RGB")).astype(np.float64)
+    base = base * 0.6 + 255 * 0.4 * (base.mean(2, keepdims=True) / 255)  # wash out
+    for j in range(res.mixed.shape[0]):
+        for i in range(res.mixed.shape[1]):
+            if res.mixed[j, i]:
+                y0, y1, x0, x1 = res.ys[j], res.ys[j + 1], res.xs[i], res.xs[i + 1]
+                base[y0:y1, x0:x1] = base[y0:y1, x0:x1] * 0.35 + np.array([255, 0, 0]) * 0.65
+    for x in res.xs[1:-1]:
+        base[:, x] = base[:, x] * 0.7
+    for y in res.ys[1:-1]:
+        base[y, :] = base[y, :] * 0.7
+    return Image.fromarray(np.clip(base, 0, 255).astype(np.uint8))
+
+
+# ---------- CLI ----------
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(prog="pixel-snap", description=__doc__.splitlines()[0])
+    ap.add_argument("input")
+    ap.add_argument("-o", "--output", help="snapped PNG (default: <input>.snapped.png)")
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("-c", "--colors", type=int, help="reduce to N colours")
+    g.add_argument("-p", "--palette", help="snap to a palette file (.hex or GIMP .gpl)")
+    ap.add_argument("--scale", type=float, help="force the pixel size instead of detecting it")
+    ap.add_argument("--offset", type=float, nargs=2, metavar=("X", "Y"), default=None,
+                    help="force the grid offset (with --scale)")
+    ap.add_argument("--upscale", type=int, default=1, help="scale the result up by N (nearest neighbour)")
+    ap.add_argument("--mixel-map", help="write a PNG with mixed cells marked red")
+    ap.add_argument("--json", action="store_true", help="print the report as JSON")
+    ap.add_argument("--version", action="version", version=__version__)
+    a = ap.parse_args(argv)
+
+    src = Image.open(a.input)
+    src = src.convert("RGBA" if "A" in src.getbands() or "transparency" in src.info else "RGB")
+    arr = np.asarray(src)
+    grid = None
+    if a.scale:
+        ox, oy = a.offset or (0, 0)
+        grid = Grid(a.scale, a.scale, ox, oy)
+    palette = load_palette(a.palette) if a.palette else None
+    res = snap(arr, colors=a.colors, palette=palette, grid=grid)
+
+    out_path = a.output or a.input.rsplit(".", 1)[0] + ".snapped.png"
+    im = Image.fromarray(res.image)
+    if a.upscale > 1:
+        im = im.resize((im.width * a.upscale, im.height * a.upscale), Image.NEAREST)
+    im.save(out_path)
+    if a.mixel_map:
+        mixel_map(arr, res).save(a.mixel_map)
+
+    report = {
+        "input": a.input,
+        "input_size": [arr.shape[1], arr.shape[0]],
+        "pixel_size": [round(res.grid.scale_x, 3), round(res.grid.scale_y, 3)],
+        "offset": [round(res.grid.offset_x, 2), round(res.grid.offset_y, 2)],
+        "cells": [res.mixed.shape[1], res.mixed.shape[0]],
+        "mixed_cells": int(res.mixed.sum()),
+        "mixed_percent": round(100.0 * res.mixed.mean(), 2),
+        "colors_used": len(res.colors),
+        "output": out_path,
+    }
+    if a.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(f"pixel size  {report['pixel_size'][0]}x{report['pixel_size'][1]}  offset {report['offset']}")
+        print(f"cells       {report['cells'][0]}x{report['cells'][1]}  mixed {report['mixed_cells']} "
+              f"({report['mixed_percent']}%)")
+        print(f"colours     {report['colors_used']}")
+        print(f"wrote       {out_path}" + (f"  map {a.mixel_map}" if a.mixel_map else ""))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
