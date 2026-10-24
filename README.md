@@ -11,10 +11,10 @@
 ```sh
 pip install pillow numpy
 curl -O https://raw.githubusercontent.com/klavdiy-core/pixel-snap/main/pixel_snap.py
-python pixel_snap.py your_sprite.png --upscale 8
+python pixel_snap.py your_sprite.png --colors 16 --upscale 8
 ```
 
-It writes `your_sprite.snapped.png` and prints the pixel size it found. No sprite at hand? `curl -O https://raw.githubusercontent.com/klavdiy-core/pixel-snap/main/examples/messy.png` and run it on that.
+It writes `your_sprite.snapped.png` and prints the pixel size it found. Without `--colors` (or `--palette`) every cell keeps its own slightly-off shade. No sprite at hand? `curl -O https://raw.githubusercontent.com/klavdiy-core/pixel-snap/main/examples/messy.png` and run it on that.
 
 ## What hurts
 
