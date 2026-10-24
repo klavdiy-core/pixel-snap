@@ -122,6 +122,23 @@ class Attacks(unittest.TestCase):
                 self.assertAlmostEqual(res.grid.scale_x, width / 16, delta=0.05)
                 np.testing.assert_array_equal(res.image, sprite)
 
+    def test_smooth_upscale(self):
+        # bilinear / bicubic upscale: no flat cell centres, every cell is a ramp
+        sprite = make_sprite(seed=6)
+        for method in (Image.BILINEAR, Image.BICUBIC):
+            for width in (112, 219):
+                with self.subTest(method=method, width=width):
+                    im = np.asarray(Image.fromarray(sprite).resize((width, width), method))
+                    res = pixel_snap.snap(im, palette=PALETTE)
+                    self.assertTrue(res.grid.smooth)
+                    self.assertAlmostEqual(res.grid.scale_x, width / 16, delta=0.05)
+                    self.assertAlmostEqual(res.grid.scale_y, width / 16, delta=0.05)
+                    np.testing.assert_array_equal(res.image, sprite)
+
+    def test_crisp_images_are_not_smooth(self):
+        for img in (degrade(make_sprite(), scale=7), degrade(make_sprite(), scale=12, blur=0, noise=0)):
+            self.assertFalse(pixel_snap.detect_grid(img).smooth)
+
     def test_flat_image_does_not_crash(self):
         flat = np.full((20, 20, 3), 128, np.uint8)
         res = pixel_snap.snap(flat, colors=4)

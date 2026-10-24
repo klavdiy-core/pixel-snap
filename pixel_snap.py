@@ -22,6 +22,7 @@ class Grid:
     scale_y: float
     offset_x: float
     offset_y: float
+    smooth: bool = False   # smooth upscale: the true colour is only at the cell centre
 
 
 @dataclass
@@ -36,9 +37,13 @@ class Result:
 
 # ---------- grid detection ----------
 
-def _edge_profile(rgb, axis):
-    """Mean colour jump between neighbouring columns (axis=1) or rows (axis=0)."""
-    d = np.abs(np.diff(rgb.astype(np.int32), axis=axis)).sum(axis=2)
+def _edge_profile(rgb, axis, order=1):
+    """Mean colour jump between neighbouring columns (axis=1) or rows (axis=0).
+
+    order=2 is the mean bend instead: after a smooth (bilinear/bicubic) upscale every
+    cell is a ramp, there are no jumps, but the ramps bend at the cell centres.
+    """
+    d = np.abs(np.diff(rgb.astype(np.int32), n=order, axis=axis)).sum(axis=2)
     return d.mean(axis=0 if axis == 1 else 1)
 
 
@@ -52,7 +57,7 @@ def _coherence(edge, pos, periods):
 
 
 def _best_period(edge, max_period=None):
-    """Return (period, offset), both float. A cell starts at x = i+1 for every jump edge[i].
+    """Return (period, offset, coherence). A cell starts at x = i+1 for every jump edge[i].
 
     Cell borders sit at offset + k*period. Their jumps add up in phase at the true
     period and at its divisors (p/2, p/3 ...), and cancel at its multiples, so the
@@ -60,20 +65,20 @@ def _best_period(edge, max_period=None):
     """
     n = len(edge) + 1
     if edge.max() <= 0 or n < 8:
-        return 1.0, 0.0
+        return 1.0, 0.0, 0.0
     edge = edge - np.median(edge)          # drop the noise floor
     edge[edge < 0] = 0
     if edge.sum() <= 0:
-        return 1.0, 0.0
+        return 1.0, 0.0, 0.0
     pos = np.arange(1, n, dtype=np.float64)
     hi = min(max_period or n / 4, n / 4)  # at least four cells, or every period looks coherent
     if hi < 2:
-        return 1.0, 0.0
+        return 1.0, 0.0, 0.0
     periods = np.exp(np.arange(np.log(2.0), np.log(hi), 0.001))
     coh, _ = _coherence(edge, pos, periods)
     best = coh.max()
     if best < 0.3:
-        return 1.0, 0.0
+        return 1.0, 0.0, 0.0
     peaks = [i for i in range(1, len(coh) - 1)
              if coh[i] >= coh[i - 1] and coh[i] >= coh[i + 1] and coh[i] >= 0.8 * best]
     i = max(peaks) if peaks else int(coh.argmax())
@@ -82,14 +87,24 @@ def _best_period(edge, max_period=None):
     fcoh, fang = _coherence(edge, pos, fine)
     j = int(fcoh.argmax())
     p = float(fine[j])
-    return p, float((fang[j] / (2 * np.pi) * p) % p)
+    return p, float((fang[j] / (2 * np.pi) * p) % p), float(fcoh[j])
+
+
+def _axis_grid(rgb, axis, max_scale):
+    p1, o1, c1 = _best_period(_edge_profile(rgb, axis), max_scale)
+    p2, o2, c2 = _best_period(_edge_profile(rgb, axis, order=2), max_scale)
+    if p2 > 1 and c2 > c1:
+        # the bends are cleaner than the jumps: a smooth upscale.
+        # bend[i] sits on pixel i+1, the centre of a cell; its border is half a cell back.
+        return p2, (o2 + 0.5 - p2 / 2) % p2, True
+    return p1, o1, False
 
 
 def detect_grid(img, max_scale=None):
     rgb = np.asarray(img)[..., :3]
-    px, ox = _best_period(_edge_profile(rgb, 1), max_scale)
-    py, oy = _best_period(_edge_profile(rgb, 0), max_scale)
-    return Grid(px, py, ox, oy)
+    px, ox, sx = _axis_grid(rgb, 1, max_scale)
+    py, oy, sy = _axis_grid(rgb, 0, max_scale)
+    return Grid(px, py, ox, oy, sx or sy)
 
 
 def _bounds(n, scale, offset):
@@ -171,14 +186,19 @@ def snap(img, colors=None, palette=None, grid=None, mix_threshold=48.0, mix_frac
     gh, gw = len(ys) - 1, len(xs) - 1
     out = np.zeros((gh, gw, 4), dtype=np.uint8)
     mixed = np.zeros((gh, gw), dtype=bool)
+    # the centre of the cell: blur and anti-aliasing live on the borders;
+    # after a smooth upscale only the middle pixel (or the two around the middle) holds the true colour
+    if grid.smooth:
+        def window(a, b):
+            return a + (b - a - 1) // 2, a + (b - a) // 2 + 1
+    else:
+        def window(a, b):
+            return a + (b - a) // 4, b - (b - a) // 4
     for j in range(gh):
-        y0, y1 = ys[j], ys[j + 1]
-        my = (y1 - y0) // 4
+        wy0, wy1 = window(ys[j], ys[j + 1])
         for i in range(gw):
-            x0, x1 = xs[i], xs[i + 1]
-            mx = (x1 - x0) // 4
-            # the centre of the cell: blur and anti-aliasing live on the borders
-            cell = arr[y0 + my:y1 - my, x0 + mx:x1 - mx].reshape(-1, arr.shape[2]).astype(np.int32)
+            wx0, wx1 = window(xs[i], xs[i + 1])
+            cell = arr[wy0:wy1, wx0:wx1].reshape(-1, arr.shape[2]).astype(np.int32)
             med = np.median(cell, axis=0)
             out[j, i, :3] = np.rint(med[:3])
             out[j, i, 3] = (255 if med[3] >= 128 else 0) if has_alpha else 255
