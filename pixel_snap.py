@@ -90,9 +90,27 @@ def _best_period(edge, max_period=None):
     return p, float((fang[j] / (2 * np.pi) * p) % p), float(fcoh[j])
 
 
-def _axis_grid(rgb, axis, max_scale):
+BEND_BLUR = 1.0   # measured: 2.0 doubled the period of small, already-blurred cells; 1.0 beat it everywhere
+
+
+def _blur(rgb, sigma=None):
+    sigma = sigma or BEND_BLUR
+    """Separable Gaussian blur. The bends of a smooth upscale are low-frequency and survive it;
+    JPEG's 8x8 block seams and ringing are high-frequency and do not."""
+    r = int(3 * sigma)
+    k = np.exp(-0.5 * (np.arange(-r, r + 1) / sigma) ** 2)
+    k /= k.sum()
+    out = rgb.astype(np.float64)
+    for axis in (0, 1):
+        pad = [(r, r) if a == axis else (0, 0) for a in range(out.ndim)]
+        p = np.pad(out, pad, mode="reflect")
+        out = sum(k[i] * np.take(p, np.arange(i, i + out.shape[axis]), axis=axis) for i in range(len(k)))
+    return out
+
+
+def _axis_grid(rgb, axis, max_scale, soft=None):
     p1, o1, c1 = _best_period(_edge_profile(rgb, axis), max_scale)
-    p2, o2, c2 = _best_period(_edge_profile(rgb, axis, order=2), max_scale)
+    p2, o2, c2 = _best_period(_edge_profile(rgb if soft is None else soft, axis, order=2), max_scale)
     if p2 > 1 and c2 > c1:
         # the bends are cleaner than the jumps: a smooth upscale.
         # bend[i] sits on pixel i+1, the centre of a cell; its border is half a cell back.
@@ -102,8 +120,9 @@ def _axis_grid(rgb, axis, max_scale):
 
 def detect_grid(img, max_scale=None):
     rgb = np.asarray(img)[..., :3]
-    px, ox, sx = _axis_grid(rgb, 1, max_scale)
-    py, oy, sy = _axis_grid(rgb, 0, max_scale)
+    soft = _blur(rgb)
+    px, ox, sx = _axis_grid(rgb, 1, max_scale, soft)
+    py, oy, sy = _axis_grid(rgb, 0, max_scale, soft)
     return Grid(px, py, ox, oy, sx or sy)
 
 

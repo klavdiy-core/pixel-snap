@@ -135,6 +135,22 @@ class Attacks(unittest.TestCase):
                     self.assertAlmostEqual(res.grid.scale_y, width / 16, delta=0.05)
                     np.testing.assert_array_equal(res.image, sprite)
 
+    def test_smooth_upscale_saved_as_jpeg(self):
+        # the 8x8 JPEG blocks used to out-shout the faint bends (README limit until 0.3.0)
+        import io
+        sprite = make_sprite(seed=7)
+        for method in (Image.BILINEAR, Image.BICUBIC):
+            for width in (219, 300):
+                with self.subTest(method=method, width=width):
+                    buf = io.BytesIO()
+                    Image.fromarray(sprite).resize((width, width), method).save(buf, "JPEG", quality=55)
+                    im = np.asarray(Image.open(buf).convert("RGB"))
+                    res = pixel_snap.snap(im, palette=PALETTE)
+                    self.assertAlmostEqual(res.grid.scale_x, width / 16, delta=0.1)
+                    self.assertAlmostEqual(res.grid.scale_y, width / 16, delta=0.1)
+                    self.assertEqual(res.image.shape, sprite.shape)
+                    self.assertGreaterEqual((res.image == sprite).all(-1).mean(), 0.95)
+
     def test_crisp_images_are_not_smooth(self):
         for img in (degrade(make_sprite(), scale=7), degrade(make_sprite(), scale=12, blur=0, noise=0)):
             self.assertFalse(pixel_snap.detect_grid(img).smooth)
