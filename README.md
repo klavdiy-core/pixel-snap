@@ -94,6 +94,11 @@ res.mixed     # bool array, one flag per cell
 - The grid must be axis-aligned (no rotation) with the same pixel size across the image.
 - An image needs at least 4 cells per axis for the grid to be found.
 - Dithering survives as dithering; that is the source, not a defect.
+- A photo or a painting gets no grid: a grid is used only if the cells' own colours explain at least 75% of the
+  image's colour variance. Measured on 949 upscaled sprites with their right grid (nearest, bicubic, bilinear,
+  Lanczos, JPEG 60): all at 0.84 or more; photos with the grid the period search invents: 0.73 at most. A sprite whose
+  period was found at twice its cell also gets 1:1 and the hint to pass `--scale`, instead of a wrong grid. Before
+  0.5.2 every photo tried got a 30-130 px "grid" — found by an external review, fixed in <commit>.
 - A fully transparent sprite comes back transparent, with no colours (0.5.1; it raised a ValueError with `--colors` —
   found by an external review, fixed in bfcc364).
 - Smooth upscales, measured on 144 random sprites (8 sprites × 6 sizes × 3 methods): bicubic 48/48 exact, Lanczos 38/48, bilinear 30/48. The grid is found in all of them; the misses are a few colours read wrong: bilinear only in cells under ~8 px, Lanczos at any size (its ringing tints the cell centre).

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import numpy as np
 from PIL import Image
 
-__version__ = "0.5.1"
+__version__ = "0.5.2"
 
 
 @dataclass
@@ -125,6 +125,32 @@ def _axis_grid(rgb, axis, max_scale, soft=None, around=None):
     return p1, o1, False, c1
 
 
+def cell_fit(rgb, px, py, ox, oy):
+    """Share of the image's colour variance that the cells' own means explain (1 = every cell one flat colour).
+    It does not depend on how the period was chosen: real pixel art keeps most of its variance between cells even
+    after a smooth upscale or JPEG; a photo given a 60 px «grid» does not (external review, 25.10)."""
+    a = np.asarray(rgb, dtype=np.float64)[..., :3]
+    h, w = a.shape[:2]
+    xs, ys = _bounds(w, px, ox), _bounds(h, py, oy)
+    lx = np.searchsorted(xs, np.arange(w), side="right") - 1
+    ly = np.searchsorted(ys, np.arange(h), side="right") - 1
+    lab = ly[:, None] * (len(xs) + 1) + lx[None, :]
+    flat = lab.ravel()
+    n = np.bincount(flat).astype(np.float64)
+    total = ((a - a.reshape(-1, 3).mean(0)) ** 2).sum()
+    if total <= 0:
+        return 1.0
+    within = 0.0
+    for c in range(3):
+        v = a[..., c].ravel()
+        s = np.bincount(flat, weights=v)
+        s2 = np.bincount(flat, weights=v * v)
+        within += (s2 - np.where(n > 0, s * s / np.maximum(n, 1), 0)).sum()
+    return float(1 - within / total)
+
+
+GRID_FIT = 0.75     # measured 25.10: 949 upscaled sprites with the right grid all >= 0.75 (nearest, bicubic, bilinear,
+                    # Lanczos, JPEG 60); 30 photos with their invented grids <= 0.73
 SAME_PIXEL = 1.15   # axes within 15 % of each other are one square pixel found twice with an error
 MIXED_FORCED = 0.2  # with --scale, more than this share of mixed cells means the forced grid is off
 
@@ -138,6 +164,7 @@ def detect_grid(img, max_scale=None, hint=None, square=True):
     near = (hint / SAME_PIXEL, hint * SAME_PIXEL) if hint else None
     px, ox, sx, cx = _axis_grid(rgb, 1, max_scale, soft, near)
     py, oy, sy, cy = _axis_grid(rgb, 0, max_scale, soft, near)
+    found = (px, py, ox, oy)            # as the two axes saw it, before any square decision
     warning = ""
     if square and (px > 1) != (py > 1):
         p = max(px, py)
@@ -166,6 +193,21 @@ def detect_grid(img, max_scale=None, hint=None, square=True):
         else:
             warning = (f"pixels are not square: x {px:.3g}, y {py:.3g} (aspect 1:{max(px, py) / min(px, py):.2g}); "
                        f"kept as found. Pass --scale to force one size")
+    if px > 1 or py > 1:
+        # the period search always finds its best period; whether the image IS a pixel grid is a separate question.
+        # Every photo tried (astronaut, coffee, a cat ... at 384x256) got a 30-130 px «grid» (external review)
+        # no retry at a divisor: smaller cells always fit a smooth photo better (up to 0.89 measured), so a divisor
+        # «fitting» proves nothing. A sprite whose period was found at twice its cell gets 1:1 and the --scale hint
+        # instead of a wrong grid.
+        # measured on the grid both axes found (a slightly stretched sprite forced square misfits by design); when
+        # one axis found nothing, on the grid that is used
+        fx, fy, fox, foy = found if found[0] > 1 and found[1] > 1 else (px, py, ox, oy)
+        fit = cell_fit(rgb, fx, fy, fox, foy)
+        if fit < GRID_FIT:
+            return Grid(1.0, 1.0, 0.0, 0.0, False,
+                            f"no pixel grid: the best grid found ({px:.3g} x {py:.3g} px) explains only {fit:.0%} "
+                            "of the colour, so this looks like a photo or a painting, not upscaled pixel art; "
+                            "the output is the input, 1:1. Pass --scale if you know the pixel size")
     if px <= 1 and py <= 1:
         warning = "no grid found: this does not look like an upscaled pixel image; the output is the input, 1:1"
     return Grid(px, py, ox, oy, sx or sy, warning)
