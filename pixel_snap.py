@@ -149,7 +149,7 @@ def cell_fit(rgb, px, py, ox, oy):
     return float(1 - within / total)
 
 
-GRID_FIT = 0.75     # measured 25.10: 949 upscaled sprites with the right grid all >= 0.75 (nearest, bicubic, bilinear,
+GRID_FIT = 0.75     # measured 25.10: 960 upscaled sprites at their right grid all >= 0.836 (nearest, bicubic, bilinear,
                     # Lanczos, JPEG 60); 30 photos with their invented grids <= 0.73
 SAME_PIXEL = 1.15   # axes within 15 % of each other are one square pixel found twice with an error
 MIXED_FORCED = 0.2  # with --scale, more than this share of mixed cells means the forced grid is off

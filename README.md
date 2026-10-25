@@ -95,7 +95,7 @@ res.mixed     # bool array, one flag per cell
 - An image needs at least 4 cells per axis for the grid to be found.
 - Dithering survives as dithering; that is the source, not a defect.
 - A photo or a painting gets no grid: a grid is used only if the cells' own colours explain at least 75% of the
-  image's colour variance. Measured on 949 upscaled sprites with their right grid (nearest, bicubic, bilinear,
+  image's colour variance. Measured on 960 upscaled sprites (24 sprites x 5 sizes x 4 methods x plain/JPEG) with their right grid (nearest, bicubic, bilinear,
   Lanczos, JPEG 60): all at 0.84 or more; photos with the grid the period search invents: 0.73 at most. A sprite whose
   period was found at twice its cell also gets 1:1 and the hint to pass `--scale`, instead of a wrong grid. Before
   0.5.2 every photo tried got a 30-130 px "grid" — found by an external review, fixed in 146c6e1.
