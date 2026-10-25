@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import numpy as np
 from PIL import Image
 
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 
 @dataclass
@@ -271,7 +271,9 @@ def snap(img, colors=None, palette=None, grid=None, mix_threshold=48.0, mix_frac
 
     opaque = out[..., 3] > 0
     cols = out[..., :3][opaque]
-    if palette is not None:
+    if not opaque.any():
+        pass             # a fully transparent sprite: nothing to recolour (argmin of nothing raised - external review)
+    elif palette is not None:
         palette = np.asarray(palette, dtype=np.uint8)
         out[..., :3][opaque] = palette[_nearest(cols, palette)]
     elif colors:

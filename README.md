@@ -94,6 +94,8 @@ res.mixed     # bool array, one flag per cell
 - The grid must be axis-aligned (no rotation) with the same pixel size across the image.
 - An image needs at least 4 cells per axis for the grid to be found.
 - Dithering survives as dithering; that is the source, not a defect.
+- A fully transparent sprite comes back transparent, with no colours (0.5.1; it raised a ValueError with `--colors` —
+  found by an external review, fixed in <commit>).
 - Smooth upscales, measured on 144 random sprites (8 sprites × 6 sizes × 3 methods): bicubic 48/48 exact, Lanczos 38/48, bilinear 30/48. The grid is found in all of them; the misses are a few colours read wrong: bilinear only in cells under ~8 px, Lanczos at any size (its ringing tints the cell centre).
 - Smooth upscales saved as JPEG (quality 55-75): grid found in 64/64. The bends are read after a light blur that removes JPEG's 8×8 block seams.
 
