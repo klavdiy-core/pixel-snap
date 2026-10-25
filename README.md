@@ -51,7 +51,16 @@ python pixel_snap.py sprite.png --palette pico8.hex      # snap to a palette
 python pixel_snap.py sprite.png -o out.png --upscale 8 --mixel-map mixels.png
 python pixel_snap.py sprite.png --scale 7.3 --offset 2 0 # you know the grid better
 python pixel_snap.py sprite.png --json                   # machine-readable report
+python pixel_snap.py sprite.png --scale-hint 6           # search only near the size you expect
 ```
+
+Pixel art has square pixels, so the two axes are checked against each other, and every decision is printed as a
+`WARNING` line (and `"warning"` in `--json`):
+
+- the axes disagree a little (3-15 %, e.g. 6.0 and 6.4): one square pixel found twice with an error. The stronger
+  axis wins for both; `--nonsquare` keeps the two values.
+- one axis shows no grid at all (a picture of columns): it takes the other axis's size.
+- the axes disagree a lot (5 x 9): a real non-square pixel, kept as found and said.
 
 Example (the files in `examples/`):
 

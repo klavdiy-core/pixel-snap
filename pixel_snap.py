@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import numpy as np
 from PIL import Image
 
-__version__ = "0.1.0"
+__version__ = "0.4.0"
 
 
 @dataclass
@@ -23,6 +23,7 @@ class Grid:
     offset_x: float
     offset_y: float
     smooth: bool = False   # smooth upscale: the true colour is only at the cell centre
+    warning: str = ""      # what was decided about the axes, said out loud
 
 
 @dataclass
@@ -56,7 +57,7 @@ def _coherence(edge, pos, periods):
     return np.abs(out) / edge.sum(), np.angle(out)
 
 
-def _best_period(edge, max_period=None):
+def _best_period(edge, max_period=None, around=None):
     """Return (period, offset, coherence). A cell starts at x = i+1 for every jump edge[i].
 
     Cell borders sit at offset + k*period. Their jumps add up in phase at the true
@@ -72,9 +73,12 @@ def _best_period(edge, max_period=None):
         return 1.0, 0.0, 0.0
     pos = np.arange(1, n, dtype=np.float64)
     hi = min(max_period or n / 4, n / 4)  # at least four cells, or every period looks coherent
-    if hi < 2:
+    lo = 2.0
+    if around:                             # a hint, or the other axis: look only near it
+        lo, hi = max(2.0, around[0]), min(hi, around[1])
+    if hi <= lo:
         return 1.0, 0.0, 0.0
-    periods = np.exp(np.arange(np.log(2.0), np.log(hi), 0.001))
+    periods = np.exp(np.arange(np.log(lo), np.log(hi), 0.001))
     coh, _ = _coherence(edge, pos, periods)
     best = coh.max()
     if best < 0.3:
@@ -108,22 +112,58 @@ def _blur(rgb, sigma=None):
     return out
 
 
-def _axis_grid(rgb, axis, max_scale, soft=None):
-    p1, o1, c1 = _best_period(_edge_profile(rgb, axis), max_scale)
-    p2, o2, c2 = _best_period(_edge_profile(rgb if soft is None else soft, axis, order=2), max_scale)
+def _axis_grid(rgb, axis, max_scale, soft=None, around=None):
+    """(period, offset, smooth, coherence) of one axis."""
+    p1, o1, c1 = _best_period(_edge_profile(rgb, axis), max_scale, around)
+    p2, o2, c2 = _best_period(_edge_profile(rgb if soft is None else soft, axis, order=2), max_scale, around)
     if p2 > 1 and c2 > c1:
         # the bends are cleaner than the jumps: a smooth upscale.
         # bend[i] sits on pixel i+1, the centre of a cell; its border is half a cell back.
-        return p2, (o2 + 0.5 - p2 / 2) % p2, True
-    return p1, o1, False
+        return p2, (o2 + 0.5 - p2 / 2) % p2, True, c2
+    return p1, o1, False, c1
 
 
-def detect_grid(img, max_scale=None):
+SAME_PIXEL = 1.15   # axes within 15 % of each other are one square pixel found twice with an error
+
+
+def detect_grid(img, max_scale=None, hint=None, square=True):
+    """hint: the pixel size you expect; only periods within 15 % of it are searched. square: when the two axes
+    disagree a little, or one finds nothing, use the stronger axis's period for both (pixel art is square);
+    a large disagreement (5 x 9) is a real non-square pixel and is kept. Every such decision is in .warning."""
     rgb = np.asarray(img)[..., :3]
     soft = _blur(rgb)
-    px, ox, sx = _axis_grid(rgb, 1, max_scale, soft)
-    py, oy, sy = _axis_grid(rgb, 0, max_scale, soft)
-    return Grid(px, py, ox, oy, sx or sy)
+    near = (hint / SAME_PIXEL, hint * SAME_PIXEL) if hint else None
+    px, ox, sx, cx = _axis_grid(rgb, 1, max_scale, soft, near)
+    py, oy, sy, cy = _axis_grid(rgb, 0, max_scale, soft, near)
+    warning = ""
+    if square and (px > 1) != (py > 1):
+        p = max(px, py)
+        axis = 0 if px > 1 else 1                        # the axis that found nothing
+        q, o, s, _ = _axis_grid(rgb, axis, max_scale, soft, (p * 0.98, p * 1.02))
+        o = o if q > 1 else 0.0
+        if axis == 0:
+            py, oy, sy = p, o, s
+        else:
+            px, ox, sx = p, o, s
+        warning = (f"the {'y' if axis == 0 else 'x'} axis showed no grid; used the other axis's pixel size "
+                   f"{p:.3g} for both (square pixels)")
+    elif px > 1 and py > 1 and max(px, py) / min(px, py) > 1.03:
+        r = max(px, py) / min(px, py)
+        if square and r <= SAME_PIXEL:
+            p, keep = (px, "x") if cx >= cy else (py, "y")
+            weak = 0 if keep == "x" else 1
+            q, o, s, _ = _axis_grid(rgb, weak, max_scale, soft, (p * 0.98, p * 1.02))
+            was = (px, py)
+            if keep == "x":
+                py, oy = p, (o if q > 1 else oy)
+            else:
+                px, ox = p, (o if q > 1 else ox)
+            warning = (f"axes disagreed: x {was[0]:.3g}, y {was[1]:.3g}; used square {p:.3g} from the stronger "
+                       f"{keep} axis. Check it, or pass --scale (or --nonsquare to keep both)")
+        else:
+            warning = (f"pixels are not square: x {px:.3g}, y {py:.3g}; kept as found. Pass --scale to force "
+                       f"one size")
+    return Grid(px, py, ox, oy, sx or sy, warning)
 
 
 def _bounds(n, scale, offset):
@@ -266,6 +306,8 @@ def main(argv=None):
     ap.add_argument("--scale", type=float, help="force the pixel size instead of detecting it")
     ap.add_argument("--offset", type=float, nargs=2, metavar=("X", "Y"), default=None,
                     help="force the grid offset (with --scale)")
+    ap.add_argument("--scale-hint", type=float, help="the pixel size you expect: search only near it")
+    ap.add_argument("--nonsquare", action="store_true", help="keep two slightly different axes as found")
     ap.add_argument("--upscale", type=int, default=1, help="scale the result up by N (nearest neighbour)")
     ap.add_argument("--mixel-map", help="write a PNG with mixed cells marked red")
     ap.add_argument("--json", action="store_true", help="print the report as JSON")
@@ -280,6 +322,8 @@ def main(argv=None):
         ox, oy = a.offset or (0, 0)
         grid = Grid(a.scale, a.scale, ox, oy)
     palette = load_palette(a.palette) if a.palette else None
+    if grid is None:
+        grid = detect_grid(arr, hint=a.scale_hint, square=not a.nonsquare)
     res = snap(arr, colors=a.colors, palette=palette, grid=grid)
 
     out_path = a.output or a.input.rsplit(".", 1)[0] + ".snapped.png"
@@ -299,6 +343,7 @@ def main(argv=None):
         "mixed_cells": int(res.mixed.sum()),
         "mixed_percent": round(100.0 * res.mixed.mean(), 2),
         "colors_used": len(res.colors),
+        "warning": res.grid.warning,
         "output": out_path,
     }
     if a.json:
@@ -308,6 +353,8 @@ def main(argv=None):
         print(f"cells       {report['cells'][0]}x{report['cells'][1]}  mixed {report['mixed_cells']} "
               f"({report['mixed_percent']}%)")
         print(f"colours     {report['colors_used']}")
+        if res.grid.warning:
+            print(f"WARNING     {res.grid.warning}")
         print(f"wrote       {out_path}" + (f"  map {a.mixel_map}" if a.mixel_map else ""))
     return 0
 
