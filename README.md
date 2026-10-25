@@ -99,6 +99,9 @@ res.mixed     # bool array, one flag per cell
   Lanczos, JPEG 60): all at 0.84 or more; photos with the grid the period search invents: 0.73 at most. A sprite whose
   period was found at twice its cell also gets 1:1 and the hint to pass `--scale`, instead of a wrong grid. Before
   0.5.2 every photo tried got a 30-130 px "grid" — found by an external review, fixed in 146c6e1.
+- The price of that rule: pixel art with 1-pixel dithering or noise, upscaled with a smooth filter (Lanczos, bilinear,
+  bicubic), can fit just under 75% and come back 1:1 (an independent sweep: 53 of 443 hard synthetic sprites, none of
+  the blob-like ones). The warning then names the fix, `--scale N`, with N filled in; with it the sprite comes back whole.
 - A fully transparent sprite comes back transparent, with no colours (0.5.1; it raised a ValueError with `--colors` —
   found by an external review, fixed in bfcc364).
 - Smooth upscales, measured on 144 random sprites (8 sprites × 6 sizes × 3 methods): bicubic 48/48 exact, Lanczos 38/48, bilinear 30/48. The grid is found in all of them; the misses are a few colours read wrong: bilinear only in cells under ~8 px, Lanczos at any size (its ringing tints the cell centre).

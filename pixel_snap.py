@@ -204,10 +204,15 @@ def detect_grid(img, max_scale=None, hint=None, square=True):
         fx, fy, fox, foy = found if found[0] > 1 and found[1] > 1 else (px, py, ox, oy)
         fit = cell_fit(rgb, fx, fy, fox, foy)
         if fit < GRID_FIT:
+            # a near miss on a whole-number pixel is usually 1-px dithering through a smooth filter: name the flag
+            # (Tsaplya: 53 of 443 such sprites went 1:1 at fit 0.67-0.75; with --scale they come back whole)
+            p = max(px, py)
+            hint = (f"if this IS pixel art (1-px dithering through a smooth upscale fits poorly), pass --scale "
+                    f"{round(p)}" if fit >= 0.6 and abs(p - round(p)) < 0.1 else "Pass --scale if you know the pixel size")
             return Grid(1.0, 1.0, 0.0, 0.0, False,
-                            f"no pixel grid: the best grid found ({px:.3g} x {py:.3g} px) explains only {fit:.0%} "
-                            "of the colour, so this looks like a photo or a painting, not upscaled pixel art; "
-                            "the output is the input, 1:1. Pass --scale if you know the pixel size")
+                        f"no pixel grid: the best grid found ({px:.3g} x {py:.3g} px) explains only {fit:.0%} "
+                        "of the colour, so this looks like a photo or a painting, not upscaled pixel art; "
+                        f"the output is the input, 1:1. {hint}")
     if px <= 1 and py <= 1:
         warning = "no grid found: this does not look like an upscaled pixel image; the output is the input, 1:1"
     return Grid(px, py, ox, oy, sx or sy, warning)
