@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import numpy as np
 from PIL import Image
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 
 @dataclass
@@ -81,7 +81,9 @@ def _best_period(edge, max_period=None, around=None):
     periods = np.exp(np.arange(np.log(lo), np.log(hi), 0.001))
     coh, _ = _coherence(edge, pos, periods)
     best = coh.max()
-    if best < 0.3:
+    # random noise reaches a coherence of about 4.9 / sqrt(n) at its best period (measured 25.10: 30 seeds per size,
+    # 24..256 px), so a fixed 0.3 let a 64 px noise image «find» a 13 x 3 grid; real grids sit at 0.86..1.0
+    if best < max(0.3, 5.5 / np.sqrt(n)):
         return 1.0, 0.0, 0.0
     peaks = [i for i in range(1, len(coh) - 1)
              if coh[i] >= coh[i - 1] and coh[i] >= coh[i + 1] and coh[i] >= 0.8 * best]
@@ -124,6 +126,7 @@ def _axis_grid(rgb, axis, max_scale, soft=None, around=None):
 
 
 SAME_PIXEL = 1.15   # axes within 15 % of each other are one square pixel found twice with an error
+MIXED_FORCED = 0.2  # with --scale, more than this share of mixed cells means the forced grid is off
 
 
 def detect_grid(img, max_scale=None, hint=None, square=True):
@@ -161,8 +164,10 @@ def detect_grid(img, max_scale=None, hint=None, square=True):
             warning = (f"axes disagreed: x {was[0]:.3g}, y {was[1]:.3g}; used square {p:.3g} from the stronger "
                        f"{keep} axis. Check it, or pass --scale (or --nonsquare to keep both)")
         else:
-            warning = (f"pixels are not square: x {px:.3g}, y {py:.3g}; kept as found. Pass --scale to force "
-                       f"one size")
+            warning = (f"pixels are not square: x {px:.3g}, y {py:.3g} (aspect 1:{max(px, py) / min(px, py):.2g}); "
+                       f"kept as found. Pass --scale to force one size")
+    if px <= 1 and py <= 1:
+        warning = "no grid found: this does not look like an upscaled pixel image; the output is the input, 1:1"
     return Grid(px, py, ox, oy, sx or sy, warning)
 
 
@@ -314,17 +319,27 @@ def main(argv=None):
     ap.add_argument("--version", action="version", version=__version__)
     a = ap.parse_args(argv)
 
-    src = Image.open(a.input)
+    try:
+        src = Image.open(a.input)
+        src.load()
+    except (OSError, ValueError) as e:            # missing, unreadable or not an image: one line, not a traceback
+        print(f"pixel-snap: cannot open {a.input}: {e.strerror or e}" if isinstance(e, OSError) and e.strerror
+              else f"pixel-snap: cannot open {a.input}: {e}", file=sys.stderr)
+        return 2
     src = src.convert("RGBA" if "A" in src.getbands() or "transparency" in src.info else "RGB")
     arr = np.asarray(src)
     grid = None
     if a.scale:
         ox, oy = a.offset or (0, 0)
-        grid = Grid(a.scale, a.scale, ox, oy)
+        grid = Grid(a.scale, a.scale, ox % a.scale, oy % a.scale)
     palette = load_palette(a.palette) if a.palette else None
     if grid is None:
         grid = detect_grid(arr, hint=a.scale_hint, square=not a.nonsquare)
     res = snap(arr, colors=a.colors, palette=palette, grid=grid)
+    if a.scale and res.mixed.mean() > MIXED_FORCED:
+        # a forced size with a wrong offset straddles every border: say it, the detector would not have done this
+        res.grid.warning = (f"with --scale {a.scale:g}, {100 * res.mixed.mean():.0f}% of cells are mixed: the size or "
+                            f"the offset is probably wrong. Drop --scale, or pass --offset X Y")
 
     out_path = a.output or a.input.rsplit(".", 1)[0] + ".snapped.png"
     im = Image.fromarray(res.image)

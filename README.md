@@ -60,7 +60,12 @@ Pixel art has square pixels, so the two axes are checked against each other, and
 - the axes disagree a little (3-15 %, e.g. 6.0 and 6.4): one square pixel found twice with an error. The stronger
   axis wins for both; `--nonsquare` keeps the two values.
 - one axis shows no grid at all (a picture of columns): it takes the other axis's size.
-- the axes disagree a lot (5 x 9): a real non-square pixel, kept as found and said.
+- the axes disagree a lot (5 x 9): a real non-square pixel, kept as found and said, with its aspect (1:1.8).
+- no grid at all (a photo, noise): nothing was upscaled; the output is the input, 1:1.
+- with `--scale`, more than 20 % of the cells come out mixed: the size or the offset you gave is probably wrong.
+
+The offset is always printed inside one pixel (`--offset 8 16` with `--scale 6` is reported as `[2, 4]`). A missing
+or unreadable input is one line on stderr and exit code 2.
 
 Example (the files in `examples/`):
 
