@@ -3,3 +3,4 @@ __pycache__/
 *.snapped.png
 build/
 *.egg-info/
+.v/
