@@ -48,6 +48,25 @@ Transparency is kept: a cell is transparent when most of its centre is.
 |---|---|---|
 | ![](examples/messy_2x.png) | ![](examples/mixels_2x.png) | ![](examples/clean.png) |
 
+## Next to the alternatives
+
+There are good, more popular tools for the same pain; pick by what you need. Each cell below is taken from that
+project's own README (26.10.2026); «not mentioned» means its README does not say, not that it cannot.
+
+| | pixel-snap | [Pixel Snapper](https://github.com/Hugo-Dz/spritefusion-pixel-snapper) | [PerfectPixel](https://github.com/theamusing/perfectpixel) | [unfake.js](https://github.com/jenissimo/unfake.js) / [unfake.py](https://github.com/painebenjamin/unfake.py) | [proper-pixel-art](https://github.com/KennethJAllen/proper-pixel-art) |
+|---|---|---|---|---|---|
+| language, install | Python, `pip install git+…` | Rust; brew, cargo | Python; `pip install perfect-pixel` | JS in the browser / Python, `pip install unfake` | Python; `pip install proper-pixel-art` |
+| finds the grid itself | yes, fractional sizes | yes | yes | yes, fractional grids | yes |
+| your own palette | yes, `.hex` / GIMP `.gpl` | yes, `--palette` | not mentioned | yes, both | yes, `--color-method palette` |
+| transparent sprites | yes, kept | not mentioned | not mentioned | yes, alpha, both | yes, `--transparent` |
+| a GUI | no | yes, hosted web version | ComfyUI node | yes, in the browser | yes, local web UI |
+| **names the cells the picture itself broke** | **yes, count + red map** | not mentioned | not mentioned | not mentioned | not mentioned |
+| **a photo with no grid** | **left 1:1, says why, with a fit score** | not mentioned (it targets non-grid art such as tilemaps) | not mentioned | not mentioned | not mentioned |
+| licence | MIT | MIT | MIT (README badge; no LICENSE file) | MIT / MIT | MIT |
+
+Want a GUI or a hosted page, or speed: Pixel Snapper or unfake. Want a tool that tells you where it is not sure — which
+cells broke the grid, and that a picture has no grid at all — that is what pixel-snap was built around.
+
 ## Use
 
 Python 3.8+, Pillow and numpy; one file.
