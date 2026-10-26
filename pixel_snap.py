@@ -205,7 +205,7 @@ def detect_grid(img, max_scale=None, hint=None, square=True):
         fit = cell_fit(rgb, fx, fy, fox, foy)
         if fit < GRID_FIT:
             # a near miss on a whole-number pixel is usually 1-px dithering through a smooth filter: name the flag
-            # (Tsaplya: 53 of 443 such sprites went 1:1 at fit 0.67-0.75; with --scale they come back whole)
+            # (a second review: 53 of 443 such sprites went 1:1 at fit 0.67-0.75; with --scale they come back whole)
             p = max(px, py)
             hint = (f"if this IS pixel art (1-px dithering through a smooth upscale fits poorly), pass --scale "
                     f"{round(p)}" if fit >= 0.6 and abs(p - round(p)) < 0.1 else "Pass --scale if you know the pixel size")

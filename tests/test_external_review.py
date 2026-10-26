@@ -36,7 +36,7 @@ class Photos(unittest.TestCase):
                 self.assertIn("no pixel grid", g.warning)
 
     def test_a_near_miss_names_the_scale_flag(self):
-        # Tsaplya's lost case: 16x16, 4 colours, 1-px noise, Lanczos to 128x128
+        # a case a second review found: 16x16, 4 colours, 1-px noise, Lanczos to 128x128
         from PIL import Image
         rng = np.random.default_rng(1)
         spr = rng.integers(0, 256, (4, 3))[rng.integers(0, 4, (16, 16))].astype(np.uint8)
