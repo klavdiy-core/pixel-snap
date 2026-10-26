@@ -9,10 +9,11 @@
 ## Try it in one minute
 
 ```sh
-pip install pillow numpy
-curl -O https://raw.githubusercontent.com/klavdiy-core/pixel-snap/main/pixel_snap.py
-python pixel_snap.py your_sprite.png --colors 16 --upscale 8
+pip install git+https://github.com/klavdiy-core/pixel-snap
+pixel-snap your_sprite.png --colors 16 --upscale 8
 ```
+Or without installing: `pip install pillow numpy`, then
+`curl -O https://raw.githubusercontent.com/klavdiy-core/pixel-snap/main/pixel_snap.py` and `python pixel_snap.py …`.
 
 It writes `your_sprite.snapped.png` and prints the pixel size it found. The output has **one pixel per cell** — the
 233×233 example comes out 16×16, the size a game engine wants; `--upscale 8` only makes it bigger to look at (128×128).

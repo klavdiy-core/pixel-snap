@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pixel-snap"
+version = "0.5.2"
+description = "Snap AI-made pixel art back onto its real grid: one colour per cell, a clean palette, a sprite at its true size."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+dependencies = ["pillow", "numpy"]
+
+[project.scripts]
+pixel-snap = "pixel_snap:main"
+
+[project.urls]
+Homepage = "https://github.com/klavdiy-core/pixel-snap"
+
+[tool.setuptools]
+py-modules = ["pixel_snap"]
