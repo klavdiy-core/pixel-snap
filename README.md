@@ -14,7 +14,10 @@ curl -O https://raw.githubusercontent.com/klavdiy-core/pixel-snap/main/pixel_sna
 python pixel_snap.py your_sprite.png --colors 16 --upscale 8
 ```
 
-It writes `your_sprite.snapped.png` and prints the pixel size it found. Without `--colors` (or `--palette`) every cell keeps its own slightly-off shade. No sprite at hand? `curl -O https://raw.githubusercontent.com/klavdiy-core/pixel-snap/main/examples/messy.png` and run it on that.
+It writes `your_sprite.snapped.png` and prints the pixel size it found. The output has **one pixel per cell** — the
+233×233 example comes out 16×16, the size a game engine wants; `--upscale 8` only makes it bigger to look at (128×128).
+Colours: without `--colors` or `--palette` every cell keeps its own slightly-off shade (218 colours in the example);
+`--colors 16` cuts them to 16. No sprite at hand? `curl -O https://raw.githubusercontent.com/klavdiy-core/pixel-snap/main/examples/messy.png` and run it on that.
 
 ## What hurts
 
@@ -28,6 +31,10 @@ Ask an image model for pixel art and you get something that *looks* like pixel a
 Fixing that by hand means guessing the pixel size, resizing, and repainting every cell.
 
 ## What it does
+
+In plain words: a **cell** is one intended pixel of the sprite; the **pixel size** is how many image pixels one cell
+covers (often not a whole number, like 14.5); a **mixed cell** is a cell that holds two colours because the picture
+broke its own grid there.
 
 1. **Finds the real pixel size and grid offset** from the image itself, fractional sizes included (edge spectrum: cell borders add up in phase at the true period). A smooth upscale (bilinear, bicubic, Lanczos) has no sharp borders, only ramps; there it reads where the ramps bend, at the cell centres.
 2. **Rebuilds the sprite at its true resolution**: one colour per cell, read from the cell's centre, so blurred borders don't leak in.
@@ -94,8 +101,9 @@ res.mixed     # bool array, one flag per cell
 - The grid must be axis-aligned (no rotation) with the same pixel size across the image.
 - An image needs at least 4 cells per axis for the grid to be found.
 - Dithering survives as dithering; that is the source, not a defect.
-- A photo or a painting gets no grid: a grid is used only if the cells' own colours explain at least 75% of the
-  image's colour variance. Measured on 960 upscaled sprites (24 sprites x 5 sizes x 4 methods x plain/JPEG) with their right grid (nearest, bicubic, bilinear,
+- A photo or a painting gets no grid and comes back 1:1. The test, in plain words: paint every cell one flat colour and
+  see how much of the picture is still there. Real pixel art keeps almost all of it; a photo loses a lot. The cut is
+  75% (in numbers: the cells' own colours must explain at least 75% of the image's colour variance). Measured on 960 upscaled sprites (24 sprites x 5 sizes x 4 methods x plain/JPEG) with their right grid (nearest, bicubic, bilinear,
   Lanczos, JPEG 60): all at 0.84 or more; photos with the grid the period search invents: 0.73 at most. A sprite whose
   period was found at twice its cell also gets 1:1 and the hint to pass `--scale`, instead of a wrong grid. Before
   0.5.2 every photo tried got a 30-130 px "grid" — found by an external review, fixed in 146c6e1.
